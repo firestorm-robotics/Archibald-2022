@@ -1,0 +1,4 @@
+See file:///home/awesome/desk/programs/git/Archibald-2022/Archibald-2022/build/tmp/compileFrcUserProgramReleaseExecutableFrcUserProgramCpp/output.txt for all output for compileFrcUserProgramReleaseExecutableFrcUserProgramCpp.
+compiling Robot.cpp successful.
+
+Finished compileFrcUserProgramReleaseExecutableFrcUserProgramCpp, see full log file:///home/awesome/desk/programs/git/Archibald-2022/Archibald-2022/build/tmp/compileFrcUserProgramReleaseExecutableFrcUserProgramCpp/output.txt.
