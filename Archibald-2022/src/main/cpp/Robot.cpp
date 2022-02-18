@@ -10,13 +10,13 @@
 
 class Robot : public ModularRobot{
 public:
-    rev::CANSparkMax frontLeft{1, rev::CANSparkMax::MotorType::kBrushless};
-    rev::CANSparkMax frontRight{2, rev::CANSparkMax::MotorType::kBrushless};
-    rev::CANSparkMax backLeft{3, rev::CANSparkMax::MotorType::kBrushless};
-    rev::CANSparkMax backRight{4, rev::CANSparkMax::MotorType::kBrushless};
-    rev::CANSparkMax indexer{5, rev::CANSparkMax::MotorType::kBrushless};
-    rev::CANSparkMax shooterRight{7, rev::CANSparkMax::MotorType::kBrushless};
-    rev::CANSparkMax shooterLeft{8, rev::CANSparkMax::MotorType::kBrushless};
+    rev::CANSparkMax frontLeft{MOTOR_FRONT_LEFT, rev::CANSparkMax::MotorType::kBrushless};
+    rev::CANSparkMax frontRight{MOTOR_FRONT_RIGHT, rev::CANSparkMax::MotorType::kBrushless};
+    rev::CANSparkMax backLeft{MOTOR_BACK_LEFT, rev::CANSparkMax::MotorType::kBrushless};
+    rev::CANSparkMax backRight{MOTOR_BACK_RIGHT, rev::CANSparkMax::MotorType::kBrushless};
+    rev::CANSparkMax indexer{MOTOR_INDEXER, rev::CANSparkMax::MotorType::kBrushless};
+    rev::CANSparkMax shooterRight{MOTOR_SHOOTER_RIGHT, rev::CANSparkMax::MotorType::kBrushless};
+    rev::CANSparkMax shooterLeft{MOTOR_SHOOTER_LEFT, rev::CANSparkMax::MotorType::kBrushless};
     rev::SparkMaxRelativeEncoder shooterRight_encoder = shooterRight.GetEncoder();
 
     frc::Joystick controls{5};
