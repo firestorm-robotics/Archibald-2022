@@ -10,7 +10,6 @@
 #include <string>
 #include <frc/Notifier.h>
 #include <units/time.h>
-
 #include <unistd.h>
 
 class ModularRobot;
@@ -35,8 +34,8 @@ class ModularRobot : public frc::RobotBase{
 private:
     std::atomic<bool> m_exit{false};
     std::vector<Module> modules;
-    const char* RobotName;
-    const char* TeamName;
+    std::string RobotName;
+    std::string TeamName;
     int TeamNumber;
     unsigned long long tick; // Number of iterations since robot began
     unsigned long long localTick; // Number of iterations since current operation-mode began
@@ -162,7 +161,7 @@ public:
 
     void StartCompetition(){
         Init();
-        printf("%s by Firestorm Robotics (FRC 6341) is now turning on!\n", RobotName);
+        printf((RobotName + " by " + TeamName + " (FRC " + std::to_string(TeamNumber) + ") is now turning on!").c_str());
         HAL_InitializeDriverStation();
         HAL_ObserveUserProgramStarting();
         std::thread periodic(periodicThread, this);
@@ -172,7 +171,7 @@ public:
             if (IsDisabled()){ // Disabled tasks
                 HAL_ObserveUserProgramDisabled();
                 if (mode != 0){
-                    printf("Begin Disable mode");
+                    HAL_SendConsoleLine("Begin Disable mode");
                     localTick = 0; // Reset the local tick counter
                     BeginDisabled();
                 }
@@ -191,7 +190,7 @@ public:
             else if (IsAutonomous()){ // Autonomous tasks
                 HAL_ObserveUserProgramAutonomous();
                 if (mode != 1){
-                    printf("Begin Autonomous mode");
+                    HAL_SendConsoleLine("Begin Autonomous mode");
                     localTick = 0; // Reset the local tick counter
                     BeginAutonomous();
                 }
@@ -210,7 +209,7 @@ public:
             else if (IsTest()){ // Test tasks
                 HAL_ObserveUserProgramTest();
                 if (mode != 2){
-                    printf("Begin Test mode");
+                    HAL_SendConsoleLine("Never gonna give you up, never gonna let you down, never gonna run around and hurt you");
                     localTick = 0; // Reset the local tick counter
                     BeginTest();
                 }
@@ -229,7 +228,7 @@ public:
             else{ // Teleop tasks
                 HAL_ObserveUserProgramTeleop();
                 if (mode != 3){
-                    printf("Begin Teleop mode");
+                    HAL_SendConsoleLine("Begin Teleop mode");
                     localTick = 0; // Reset the local tick counter
                     BeginTeleop();
                 }

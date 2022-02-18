@@ -1,4 +1,0 @@
-See file:///home/awesome/desk/programs/git/Archibald-2022/Archibald-2022/build/tmp/linkFrcUserProgramReleaseExecutable/output.txt for all output for linkFrcUserProgramReleaseExecutable.
-linking frcUserProgram successful.
-
-Finished linkFrcUserProgramReleaseExecutable, see full log file:///home/awesome/desk/programs/git/Archibald-2022/Archibald-2022/build/tmp/linkFrcUserProgramReleaseExecutable/output.txt.

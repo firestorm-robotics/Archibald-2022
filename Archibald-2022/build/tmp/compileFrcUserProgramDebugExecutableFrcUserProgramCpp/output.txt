@@ -1,8 +1,0 @@
-See file:///home/awesome/desk/programs/git/Archibald-2022/Archibald-2022/build/tmp/compileFrcUserProgramDebugExecutableFrcUserProgramCpp/output.txt for all output for compileFrcUserProgramDebugExecutableFrcUserProgramCpp.
-compiling Robot.cpp failed.
-/home/awesome/desk/programs/git/Archibald-2022/Archibald-2022/src/main/cpp/Robot.cpp:62:10: fatal error: ctre/Phoenix.h: No such file or directory
- #include <ctre/Phoenix.h>
-          ^~~~~~~~~~~~~~~~
-compilation terminated.
-
-Finished compileFrcUserProgramDebugExecutableFrcUserProgramCpp, see full log file:///home/awesome/desk/programs/git/Archibald-2022/Archibald-2022/build/tmp/compileFrcUserProgramDebugExecutableFrcUserProgramCpp/output.txt.
