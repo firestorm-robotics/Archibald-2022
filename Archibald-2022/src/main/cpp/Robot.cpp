@@ -37,25 +37,11 @@ public:
     bool runningIndexer = false;
     bool indexerButtonClick = false;
 
-    uint8_t motorMode = 0; // 0 = max speed, 1 = 80%
+    uint8_t motorMode = 0; // 0 = max speed, 1 = variable mode
+    static uint8_t maxMode = 1;
     bool modeButtonClick = false;
 
     void TeleopLoop(){
-        /*double limit = controls.GetThrottle();
-        double turn = controls.GetX() * limit;
-        double forw = controls.GetY() * limit;
-        frontRight.Set(forw);
-        frontLeft.Set(forw);
-        backRight.Set(forw);
-        backLeft.Set(forw);
-
-        if (controls.GetTrigger()){
-            indexer.Set(0.2);
-        }
-        shooterRight.Set(0.05);
-        shooterLeft.Set(-0.05);
-        usleep(100000);
-        printf("%d\n", shooterRight_encoder.GetVelocity());*/
         double limit = (controls.GetThrottle() + 1) / 2;
         double forThrust = controls.GetY() * limit;
         double sideThrust = controls.GetX() * limit;
@@ -78,8 +64,8 @@ public:
                 shooterLeft.Set(-1);
             }
             else if (motorMode == 1){
-                shooterRight.Set(0.4);
-                shooterLeft.Set(-0.4);
+                shooterRight.Set(limit * 2);
+                shooterLeft.Set(limit * -2);
             }
         }
         else{
@@ -103,10 +89,8 @@ public:
             modeButtonClick = true;
         }
         else if (modeButtonClick){
-            if (motorMode == 0){
-                motorMode = 1;
-            }
-            else if (motorMode == 1){
+            motorMode ++;
+            if (motorMode > maxMode){
                 motorMode = 0;
             }
             modeButtonClick = false;
