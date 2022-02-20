@@ -7,6 +7,8 @@
 #include "rev/CANSparkMax.h"
 #include <constants.h>
 #include <frc/Joystick.h>
+#include <frc/DigitalInput.h>
+#include <cmath>
 
 class Robot : public ModularRobot{
 public:
@@ -20,6 +22,7 @@ public:
     rev::SparkMaxRelativeEncoder shooterRight_encoder = shooterRight.GetEncoder();
 
     frc::Joystick controls{5};
+    frc::DigitalInput test{2};
     Robot(){
         setData("Archibald", "Firestorm Robotics", 6341);
     }
@@ -27,6 +30,15 @@ public:
     void Init(){
 
     }
+
+    bool runningShooter = false;
+    bool triggerClick = false;
+
+    bool runningIndexer = false;
+    bool indexerButtonClick = false;
+
+    uint8_t motorMode = 0; // 0 = max speed, 1 = 80%
+    bool modeButtonClick = false;
 
     void TeleopLoop(){
         /*double limit = controls.GetThrottle();
@@ -37,26 +49,70 @@ public:
         backRight.Set(forw);
         backLeft.Set(forw);
 
-        /*if (controls.GetTrigger()){
+        if (controls.GetTrigger()){
             indexer.Set(0.2);
         }
         shooterRight.Set(0.05);
         shooterLeft.Set(-0.05);
         usleep(100000);
         printf("%d\n", shooterRight_encoder.GetVelocity());*/
-        double forThrust = controls.GetY() * controls.GetThrottle();
-        double sideThrust = controls.GetX() * controls.GetThrottle();
-        frontLeft.Set(forThrust + sideThrust);
-        backLeft.Set(forThrust + sideThrust);
-        frontRight.Set(-forThrust + sideThrust);
-        frontRight.Set(-forThrust + sideThrust);
+        double limit = (controls.GetThrottle() + 1) / 2;
+        double forThrust = controls.GetY() * limit;
+        double sideThrust = controls.GetX() * limit;
+        if (!(runningIndexer && abs(controls.GetTwist()) > 0.05)){
+            frontLeft.Set(forThrust + sideThrust);
+            backLeft.Set(forThrust + sideThrust);
+            frontRight.Set(-forThrust + sideThrust);
+            frontRight.Set(-forThrust + sideThrust);
+        }
         if (controls.GetTrigger()){
-            shooterRight.Set(1);
-            shooterLeft.Set(-1);
+            triggerClick = true;
+        }
+        else if (triggerClick){
+            runningShooter = !runningShooter;
+            triggerClick = false;
+        }
+        if (runningShooter){
+            if (motorMode == 0){
+                shooterRight.Set(1);
+                shooterLeft.Set(-1);
+            }
+            else if (motorMode == 1){
+                shooterRight.Set(0.4);
+                shooterLeft.Set(-0.4);
+            }
         }
         else{
             shooterRight.Set(0);
             shooterLeft.Set(0);
+        }
+        if (controls.GetRawButton(2)){
+            indexerButtonClick = true;
+        }
+        else if (indexerButtonClick){
+            indexerButtonClick = false;
+            runningIndexer = !runningIndexer;
+        }
+        if (runningIndexer){
+            indexer.Set(controls.GetTwist() * limit);
+        }
+        else{
+            indexer.Set(0);
+        }
+        if (controls.GetRawButton(3)){
+            modeButtonClick = true;
+        }
+        else if (modeButtonClick){
+            if (motorMode == 0){
+                motorMode = 1;
+            }
+            else if (motorMode == 1){
+                motorMode = 0;
+            }
+            modeButtonClick = false;
+        }
+        if (test.Get() == 0){
+            printf("You Win!");
         }
     }
 };

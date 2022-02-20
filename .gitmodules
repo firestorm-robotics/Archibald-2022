@@ -1,0 +1,3 @@
+[submodule "Archibald-2022/websocketpp"]
+	path = Archibald-2022/websocketpp
+	url = https://github.com/zaphoyd/websocketpp
