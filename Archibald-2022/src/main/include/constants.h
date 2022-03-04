@@ -6,6 +6,8 @@
 #define MOTOR_FRONT_RIGHT     2
 #define MOTOR_BACK_LEFT       3
 #define MOTOR_BACK_RIGHT      4
+#define MOTOR_SHOOTER_LEFT    5
+#define MOTOR_SHOOTER_RIGHT   6
 #define MOTOR_INDEXER         7
-#define MOTOR_SHOOTER_RIGHT   5
-#define MOTOR_SHOOTER_LEFT    6
+#define MOTOR_INTAKE          8
+#define MOTOR_INTAKE_DROP     9

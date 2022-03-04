@@ -1,7 +1,5 @@
 // Highly modular FRC robot class with threading support
-// Works like a standard robot at face value, but has lots of extra cool functionality
-// Such as the ability to add modules which can run in threads if you want them to
-// As well as extra functionality for internet servers
+// Basically a better version of Timed Robot.
 
 #include <frc/RobotBase.h>
 #include <vector>
@@ -161,7 +159,7 @@ public:
 
     void StartCompetition(){
         Init();
-        printf((RobotName + " by " + TeamName + " (FRC " + std::to_string(TeamNumber) + ") is now turning on!").c_str());
+        printf((RobotName + " by " + TeamName + " (FRC " + std::to_string(TeamNumber) + ") is now turning on!\n").c_str());
         HAL_InitializeDriverStation();
         HAL_ObserveUserProgramStarting();
         std::thread periodic(periodicThread, this);
@@ -209,7 +207,7 @@ public:
             else if (IsTest()){ // Test tasks
                 HAL_ObserveUserProgramTest();
                 if (mode != 2){
-                    HAL_SendConsoleLine("Never gonna give you up, never gonna let you down, never gonna run around and hurt you");
+                    HAL_SendConsoleLine("Begin test mode");
                     localTick = 0; // Reset the local tick counter
                     BeginTest();
                 }
