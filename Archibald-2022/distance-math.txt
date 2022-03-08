@@ -1,0 +1,17 @@
+================================================
+4096 ticks per rev
+3 > 1 gearbox
+4096 * 3 = 12288 encoder ticks per full drivetrain revolution
+
+6 inch diameter, circumference = pi * radius * 2 = pi * diameter, so 19 inch circumference wheels
+
+So
+Every revolution will travel 19 inches
+
+IF we want to travel 1 inch, we go 1/19th of a revolution, thus
+
+12288/19 = 647
+
+Rounding was done, this is basically approximation. Please improve the math here if you want to, the number for ticks-per-inch is in constants.h.
+
+=================================================
