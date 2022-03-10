@@ -21,4 +21,18 @@
 #define PID_ENCODER_ERROR 50 // Acceptable error rate for a PID encoder.
 
 
-const double PID_kP = 0.1, PID_kI = 1e-4, PID_kD = 1, PID_kIz = 0, PID_kFF = 0, PID_kMaxOutput = 0.5, PID_kMinOutput = -0.5;
+const double PID_kP = 0.00004, PID_kI = 0, PID_kD = 0.00025, PID_kIz = 0, PID_kFF = 0, PID_kMaxOutput = 0.5, PID_kMinOutput = -0.5;
+
+#define BUTTONBOARD_PANIC                 8
+#define BUTTONBOARD_DROP_INTAKE           3
+#define BUTTONBOARD_RAISE_INTAKE          4
+#define BUTTONBOARD_MACRO_INTAKE          5
+#define BUTTONBOARD_INDEXER_UP            11
+#define BUTTONBOARD_INDEXER_DOWN          13
+#define BUTTONBOARD_SHOOTERSPEED_LOW      6
+#define BUTTONBOARD_SHOOTERSPEED_VARIABLE 10
+#define BUTTONBOARD_SHOOTER_AXIS          2
+#define BUTTONBOARD_SHOOTER               9
+
+#define SHOOTERSPEED_LOW  NEO_500_RPM * 0.4
+#define SHOOTERSPEED_HIGH NEO_500_RPM * 0.8
