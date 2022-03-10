@@ -6,11 +6,15 @@
 #define MOTOR_FRONT_RIGHT     2
 #define MOTOR_BACK_LEFT       3
 #define MOTOR_BACK_RIGHT      4
-#define MOTOR_SHOOTER_LEFT    5
-#define MOTOR_SHOOTER_RIGHT   6
+#define MOTOR_SHOOTER_LEFT    6 // 5
+#define MOTOR_SHOOTER_RIGHT   5 // 6
 #define MOTOR_INDEXER         7
 #define MOTOR_INTAKE          8
 #define MOTOR_INTAKE_DROP     9
+
+#define NEO_500_RPM        5676
+
+#define UNIVERSAL_DEADBAND 0.1 // The universal deadband for controls, this helps with our high-sensitivity issue.
 
 #define ENCODER_TICKS_PER_INCH 647 // See distance-math.txt in the root of this project.
 
