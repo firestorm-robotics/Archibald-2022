@@ -3,7 +3,7 @@
 
 
 void requestFunction(HTTPARGS){
-
+    ron -> content = "You are a fucking loser and I hate you";
 }
 
 void disconnectedCallback(Client* client){

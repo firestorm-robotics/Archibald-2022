@@ -414,6 +414,7 @@ struct HTTPServer{
                     buf[req -> contentLength] = 0; // Add a 0 at the end, so it is a valid string.
                     length = recv(client -> sock, buf, req -> contentLength, 0);
                     req -> content += buf;
+                    std::cout << "Freeing buffer" << std::endl;
                     free(buf);
                     if (req -> content.length() >= req -> contentLength){ // That's all, folks!
                         req -> procpos = DETERMINING_HTTP_METHOD;
@@ -421,9 +422,13 @@ struct HTTPServer{
                         ron -> origReq = req;
                         self -> requestCallback(HTTPPASSARGS);
                         self -> sendResponse(ron, client);
+                        std::cout << "Deallocating request members" << std::endl;
                         req -> dealloc();
+                        std::cout << "Freeing request" << std::endl;
                         free(req);
+                        std::cout << "Deallocating response members" << std::endl;
                         ron -> dealloc();
+                        std::cout << "Freeing response" << std::endl;
                         free(ron);
                     }
                 }

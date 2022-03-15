@@ -43,12 +43,15 @@ public:
     void TeleopLoop(){
 
     }
+
     void AutonomousLoop(){
 
     }
+
     void BeginTest(){
 
     }
+    
     void TestLoop(){
 
     }

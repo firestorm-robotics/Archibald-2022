@@ -1,3 +1,7 @@
+#include "networktables/NetworkTable.h"
+//#include "networktables/NetworkTableEntry.h"
+//#include "networktables/NetworkTableInstance.h"
+
 #include <frc/DriverStation.h>
 #include <frc/livewindow/LiveWindow.h>
 #include <frc/shuffleboard/Shuffleboard.h>
@@ -15,6 +19,7 @@
 #include <iostream>
 #include <sys/time.h>
 #include "cameraserver/CameraServer.h"
+
 
 #define UNIVERSAL_DEADBAND 0.1 // The universal deadband for controls is 5%, this helps with our high-sensitivity issue.
 
@@ -265,11 +270,15 @@ public:
     rev::CANSparkMax shooterRight {MOTOR_SHOOTER_RIGHT, rev::CANSparkMax::MotorType::kBrushless};
     rev::CANSparkMax shooterLeft  {MOTOR_SHOOTER_LEFT,  rev::CANSparkMax::MotorType::kBrushless};
 
+    //Timer time;
+
     //Superstructure* superstructure;
 
 
     rev::CANSparkMax intake {MOTOR_INTAKE, rev::CANSparkMax::MotorType::kBrushless};
     TalonSRX intakeDrop {MOTOR_INTAKE_DROP};
+
+    TalonFX climb {MOTOR_CLIMB};
 
     rev::SparkMaxPIDController    shooterRightPID        = shooterRight.GetPIDController();
     rev::SparkMaxPIDController    shooterLeftPID         = shooterLeft.GetPIDController();
@@ -310,33 +319,31 @@ public:
     int                           times                  =                     0;
 
     frc::GenericHID               controls{3};
+    std::shared_ptr<nt::NetworkTable> table = nt::NetworkTableInstance::GetDefault().GetTable("limelight");
 
     Robot() {
         setData("Archibald", "Firestorm Robotics", 6341);
         //shooterModeButton.set(&controls, 3);
         //indexerButton.set(&controls, 2);
-        setPeriodicDelay(10000);
+        setPeriodicDelay(2000);
         intakeEncoderifiedTest = EncoderifiedSpark::createEncoderifiedSpark(&intake);
         indexerEncoderified = EncoderifiedSpark::createEncoderifiedSpark(&indexer);
 
         // Creates UsbCamera and MjpegServer [1] and connects them
-        frc::CameraServer::StartAutomaticCapture();
-
-        // Creates the CvSink and connects it to the UsbCamera
-        cs::CvSink cvSink = frc::CameraServer::GetVideo();
-
-        // Creates the CvSource and MjpegServer [2] and connects them
-        cs::CvSource outputStream = frc::CameraServer::PutVideo("Blur", 800, 800);
 
         drive = new SparkMaxDrive(&frontLeft, &frontRight, &backLeft, &backRight);
         //shooterRight.SetInverted(false);
         //shooterLeft.SetInverted(false);
         //superstructure = new Superstructure(&intake, &intakeDrop, &indexer, &shooterRight, &shooterLeft, &intakePhotoelectric, &intakeDown, &intakeUp, &shooterPhotoelectric);
+        setPIDPresets(shooterLeftPID);
+        setPIDPresets(shooterRightPID);
+
+        climb.SetNeutralMode(NeutralMode::Brake);
     }
 
     void loadShooter(long speed){
         shooterRightPID.SetReference(speed, rev::ControlType::kVelocity);
-        shooterLeftPID.SetReference(-speed, rev::ControlType::kVelocity);
+        shooterLeftPID.SetReference(speed, rev::ControlType::kVelocity);
     }
 
     uint8_t shootMode = 0;
@@ -356,33 +363,36 @@ public:
 
     bool shoot(long speed){
         if (shootState == 0){
-            if (shooterPhotoelectric.Get()){
-                shootState = 1;
-                loadShooter(speed);
-            }
-            else {
-                loadBallToShooter();
-            }
+            loadShooter(speed);
+            shootState = 1;
         }
         else if (shootState == 1){
-            if (shooterRightEncoder.GetVelocity() <= speed + 50){
+            if (shooterRightEncoder.GetVelocity() >= speed - PID_ACCEPTABLE_ERROR){
                 shootState = 2;
                 printf("Phase 2\n");
             }
             else{
-                intakeEncoderifiedTest -> drivePercent(0);
+                indexerEncoderified -> drivePercent(0);
             }
         }
         else if (shootState == 2){
+            if (shooterPhotoelectric.Get()){
+                shootState = 3;
+            }
+            else {
+                indexerEncoderified ->  drivePercent(0.3);
+            }
+        }
+        else if (shootState == 3){
             if (!shooterPhotoelectric.Get()){
                 shooterRight.Set(0);
                 shooterLeft.Set(0);
                 shootState = 0;
-                intakeEncoderifiedTest -> drivePercent(0);
+                indexerEncoderified -> drivePercent(0);
                 return true;
             }
             else{
-                intakeEncoderifiedTest -> drivePercent(0.5);
+                indexerEncoderified -> drivePercent(0.5);
             }
         }
         return false;
@@ -499,7 +509,7 @@ public:
     void buttonBoardMode(){
         double tankLeft = xboxControls.GetRawAxis(1);
         double tankRight = xboxControls.GetRawAxis(5);
-        double limit = 0;//(controls.GetThrottle() + 1) / 2;
+        double limit = 0.6;//(controls.GetThrottle() + 1) / 2;
         if (fabs(tankLeft) > UNIVERSAL_DEADBAND){
             drive -> percentDifferentialRight(-tankLeft * limit);
         }
@@ -548,7 +558,7 @@ public:
         if (xboxControls.GetYButton()){
             mode = MODE_SHOOT;
         }
-        indexer.Set((xboxControls.GetRawAxis(2) - xboxControls.GetRawAxis(3)) * 0.4);
+        //indexer.Set((xboxControls.GetRawAxis(2) - xboxControls.GetRawAxis(3)) * 0.4);
         drive -> run();
         //intakeEncoderifiedTest ->  runPID();
     }
@@ -562,11 +572,20 @@ public:
 
     double variableSpeed = 0;
 
+    bool manualIndexerRan = false;
+
+    bool needsNominalNotification = false;
+
+    bool manualIntakeRun = true;
+
+    long shooterReqSpeed = 0;
+
     void doubleMode(){
         //printf("Reading joystick values\n");
         double tankLeft = xboxControls.GetRawAxis(1);
         double tankRight = xboxControls.GetRawAxis(5);
-        double limit = (joystickControls.GetThrottle() + 1) / 2;
+        //double limit = (joystickControls.GetThrottle() + 1) / 2;
+        double limit = (controls.GetRawAxis(0) + 1) / 2;
         //printf("Running drivetrain\n");
         if (fabs(tankLeft) > UNIVERSAL_DEADBAND){
             drive -> percentDifferentialRight(-tankLeft * limit);
@@ -580,25 +599,31 @@ public:
         else {
             drive -> percentDifferentialLeft(0);
         }
-        if (joystickControls.GetRawButton(12) || controls.GetRawButton(BUTTONBOARD_DROP_INTAKE)){
+        if (/*joystickControls.GetRawButton(12) || */controls.GetRawButton(BUTTONBOARD_DROP_INTAKE)){
             thingitishi = false;
             mode = MODE_DROP_INTAKE;
         }
         //printf("Getting button 11\n");
-        if (joystickControls.GetRawButton(11) || controls.GetRawButton(BUTTONBOARD_RAISE_INTAKE)){
+        if (/*joystickControls.GetRawButton(11) || */controls.GetRawButton(BUTTONBOARD_RAISE_INTAKE)){
             mode = MODE_RAISE_INTAKE;
         }
         //printf("Getting button 10\n");
-        if (joystickControls.GetRawButton(10) || controls.GetRawButton(BUTTONBOARD_MACRO_INTAKE)){
+        if (/*joystickControls.GetRawButton(10) || */controls.GetRawButton(BUTTONBOARD_MACRO_INTAKE)){
             mode = MODE_INTAKE_BALL;
         }
-        if (controls.GetRawButton(BUTTONBOARD_INDEXER_UP)){
-            indexer.Set(0.5);
+        if (controls.GetRawButton(BUTTONBOARD_INDEXER_UP)/* || joystickControls.GetRawButton(JOYSTICK_INDEXER_UP)*/){
+            indexer.Set(0.4);
+            manualIndexerRan = true;
         }
-        if (controls.GetRawButton(BUTTONBOARD_INDEXER_DOWN)){
-            indexer.Set(-0.5);
+        else if (controls.GetRawButton(BUTTONBOARD_INDEXER_DOWN) /*|| joystickControls.GetRawButton(JOYSTICK_INDEXER_DOWN)*/){
+            indexer.Set(-0.4);
+            manualIndexerRan = true;
         }
-        if (controls.GetRawButton(BUTTONBOARD_SHOOTER)){
+        else if (manualIndexerRan) {
+            indexer.Set(0);
+            manualIndexerRan = false;
+        }
+        if (controls.GetRawButton(BUTTONBOARD_SHOOTER)/* || joystickControls.GetTrigger()*/){
             shootButtonState = true;
         }
         else if (shootButtonState){
@@ -609,7 +634,7 @@ public:
                 }
                 else if (controls.GetRawButton(BUTTONBOARD_SHOOTERSPEED_VARIABLE)){
                     loadShooter(NEO_500_RPM * controls.GetRawAxis(BUTTONBOARD_SHOOTER_AXIS));
-                    variableSpeed = controls.GetRawAxis(BUTTONBOARD_SHOOTER_AXIS);
+                    variableSpeed = (controls.GetRawAxis(BUTTONBOARD_SHOOTER_AXIS) + 1) / 2;
                 }
                 else{
                     loadShooter(SHOOTERSPEED_HIGH);
@@ -621,20 +646,43 @@ public:
                 shooterLeft.Set(0);
             }
             shootButtonState = false;
+            needsNominalNotification = true;
         }
-        if (shooting && controls.GetRawButton(BUTTONBOARD_SHOOTERSPEED_VARIABLE)){
-            double tst = controls.GetRawAxis(BUTTONBOARD_SHOOTER_AXIS);
-            if (tst > variableSpeed + 0.05 || tst < variableSpeed - 0.05){
-                variableSpeed = tst;
-                loadShooter(NEO_500_RPM * tst);
+        if (shooting){
+            if (controls.GetRawButton(BUTTONBOARD_SHOOTERSPEED_VARIABLE)){
+                double tst = (controls.GetRawAxis(BUTTONBOARD_SHOOTER_AXIS) + 1) / 2;
+                if (tst > variableSpeed + 0.05 || tst < variableSpeed - 0.05){
+                    variableSpeed = tst;
+                    loadShooter(NEO_500_RPM * tst);
+                }
+            }
+            if (controls.GetRawButton(BUTTONBOARD_SHOOTERSPEED_VARIABLE)){
+                shooterReqSpeed = ((controls.GetRawAxis(BUTTONBOARD_SHOOTER_AXIS) + 1) / 2) * NEO_500_RPM;
+            }
+            else if (controls.GetRawButton(BUTTONBOARD_SHOOTERSPEED_LOW)){
+                shooterReqSpeed = SHOOTERSPEED_LOW;
+            }
+            else{
+                shooterReqSpeed = SHOOTERSPEED_HIGH;
             }
         }
+        if (fabs(shooterReqSpeed - shooterRightEncoder.GetVelocity()) <= PID_ACCEPTABLE_ERROR){
+            if (needsNominalNotification){
+                printf(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>\n");
+                printf(" YOU HAVE ACHIEVED NOMINAL SPEED \n");
+                printf(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>\n");
+                needsNominalNotification = false;
+            }
+        }
+        else {
+            needsNominalNotification = true; // When it goes out of the acceptable range, it resets the nominal notification.
+        }
         //printf("Getting button 9\n");
-        if (joystickControls.GetRawButton(9)){
+        if (false/*joystickControls.GetRawButton(9)*/){
             mode = MODE_LOAD_TO_SHOOTER;
         }
         //printf("Getting button 8\n");
-        if (xboxControls.GetXButton()){
+        /*if (xboxControls.GetXButton()){
             if (test){
                 shooterRightPID.SetReference(4000, rev::ControlType::kVelocity);
                 shooterLeftPID.SetReference(-4000, rev::ControlType::kVelocity);
@@ -648,9 +696,9 @@ public:
             //shooterLeft.Set(0);
             joystickPIDShot = false;
             test = true; // Allow it to load PID again
-        }
+        }*/
         //printf("Getting button 5\n");
-        if (joystickControls.GetRawButton(5) || controls.GetRawButton(9)){
+        if (false/*joystickControls.GetRawButton(5)*/){
             //indexer.Set(joystickControls.GetRawAxis(0) * -0.7);
             double intakeDropVal = -joystickControls.GetY() + controls.GetRawAxis(2);
             if ((intakeDropVal < 0 || !intakeUp.Get()) && (intakeDropVal > 0 || !intakeDown.Get())) { // It can't keep moving up (positive) if it hits the limit, as demonstrated by this beeee-utiful or condition.
@@ -662,17 +710,36 @@ public:
             intakeDrop.Set(ControlMode::PercentOutput, 0);
         }
         //printf("Getting y button\n");
-        if (xboxControls.GetYButton()){
+        /*if (xboxControls.GetYButton()){
             mode = MODE_SHOOT;
-        }
+        }*/
         //printf("Running indexer\n");
-        indexer.Set((xboxControls.GetRawAxis(2) - xboxControls.GetRawAxis(3)) * 0.4);
+        //indexer.Set((xboxControls.GetRawAxis(2) - xboxControls.GetRawAxis(3)) * 0.4);
         //printf("Running drivetrain\n");
         drive -> run();
         //intakeEncoderifiedTest ->  runPID();
         if (controls.GetRawButton(BUTTONBOARD_PANIC)){
             mode = MODE_MANUAL;
-            printf("All macros ended\n");
+            intake.Set(0);
+            indexer.Set(0);
+            shooterLeft.Set(0);
+            shooterRight.Set(0);
+            printf("PANNIICCCCC\nPANNNNIICCCCCC\n\nWhich is to say: you panicked and deactivated all the motors on the robot.\n");
+        }
+        if (controls.GetRawButton(BUTTONBOARD_MANUAL_INTAKE)){
+            intake.Set(-0.5);
+            manualIntakeRun = true;
+        }
+        else if (manualIntakeRun) {
+            intake.Set(0);
+            manualIntakeRun = false;
+        }
+        if (controls.GetRawButton(7)){
+            climb.Set(ControlMode::PercentOutput, xboxControls.GetRawAxis(2) - xboxControls.GetRawAxis(3));
+            std::cout << xboxControls.GetRawAxis(2) - xboxControls.GetRawAxis(3);
+        }
+        else{
+            climb.Set(ControlMode::PercentOutput, 0);
         }
     }
 
@@ -689,9 +756,7 @@ public:
             mode = mode | MODE_SHOOT;
         }*/
         //printf("Double Mode\n");
-        if (mode == MODE_MANUAL){
-            doubleMode();
-        }
+        doubleMode();
         if (mode == MODE_SHOOT){
             if (shoot(NEO_500_RPM * 0.5)){
                 mode = MODE_MANUAL;
@@ -711,7 +776,6 @@ public:
             }
         }
         if (mode == MODE_INTAKE_BALL){
-            doubleMode();
             if (intakeBall()){
                 mode = MODE_MANUAL;
                 printf("Intook ball\n");
@@ -731,19 +795,40 @@ public:
         }
         //superstructure -> run();
     }
+
+    bool runningAutonomous = true;
     void AutonomousLoop(){
 
     }
-    void BeginTest(){
-        //intakeEncoderifiedTest -> driveBy(1000);
+    void BeginAutonomous(){
+        while (!shoot(SHOOTERSPEED_HIGH));
+        usleep(500000);
+        frontLeft.Set(0.3);
+        frontRight.Set(-0.3);
+        backLeft.Set(0.3);
+        backRight.Set(-0.3);
+        usleep(2500000);
+        frontLeft.Set(0);
+        frontRight.Set(0);
+        backLeft.Set(0);
+        backRight.Set(0);
     }
-    void TestLoop(){
-        for (int x = 1; x < 14; x ++){
-            if (controls.GetRawButton(x)){
-                std::cout << "Button " << x << " was just pushed" << std::endl;
-                usleep(1000000);
-            }
-        }
+
+    const int shooterTestVelocity = 1000;
+
+    /*void TestLoop() {
+        //std::cout << time.Get() << std::endl;
+        usleep(1000000);
+    }*/
+
+    void TestLoop() {
+        //double limelightTargetOffsetAngle_Horizontal = table->GetNumber("tx",0.0);
+        double limelightTargetOffsetAngle_Vertical = table->GetNumber("ty",0.0);
+        double dif = LIMELIGHT_HUB_ANGLE_FOR_SHOOTING - limelightTargetOffsetAngle_Vertical / 27;
+        frontLeft.Set(dif);
+        backLeft.Set(dif);
+        frontRight.Set(-dif);
+        backRight.Set(-dif);
     }
 };
 
