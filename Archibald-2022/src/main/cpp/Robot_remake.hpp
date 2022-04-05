@@ -15,6 +15,12 @@
 #include <iostream>
 #include <sys/time.h>
 
+#include <util/Motor.hpp>
+#include <util/RunManager.hpp>
+#include "cleverName/Intake.hpp"
+#include "cleverName/Indexer.hpp"
+#include "cleverName/Drive.hpp"
+
 
 double sigmoid(double base, long long x){
     return (1/(1 + (1 / pow(base, x))) - 0.5) * 2; // Gets a sigmoid designed specifically for custom PID implementations
@@ -30,9 +36,26 @@ void setPIDPresets(rev::SparkMaxPIDController sparky){
 }
 
 
-class Robot : public ModularRobot{
+class Robot : public ModularRobot {
+    Motor* frontLeft = Motor::CreateMotor(new rev::CANSparkMax(MOTOR_FRONT_LEFT, rev::CANSparkMax::MotorType::kBrushless));
+    Motor* frontRight = Motor::CreateMotor(new rev::CANSparkMax(MOTOR_FRONT_RIGHT, rev::CANSparkMax::MotorType::kBrushless));
+    Motor* backLeft = Motor::CreateMotor(new rev::CANSparkMax(MOTOR_BACK_LEFT, rev::CANSparkMax::MotorType::kBrushless));
+    Motor* backRight = Motor::CreateMotor(new rev::CANSparkMax(MOTOR_BACK_RIGHT, rev::CANSparkMax::MotorType::kBrushless));
+    Motor* indexerMotor = Motor::CreateMotor(new rev::CANSparkMax(MOTOR_INDEXER, rev::CANSparkMax::MotorType::kBrushless));
+    Motor* intakeMotor = Motor::CreateMotor(new rev::CANSparkMax(MOTOR_INTAKE, rev::CANSparkMax::MotorType::kBrushless));
+
+    SimpleDrive drive;
+    Intake intake;
+    Indexer indexer;
+
+    frc::Joystick joystick{1};
+    frc::GenericHID buttonBoard{2};
+    frc::XboxController xboxController{3};
+
+    frc::DigitalInput photoElectric_intake {PHOTOELECTRIC_INTAKE};
+    frc::DigitalInput photoElectric_shooter {PHOTOELECTRIC_SHOOTER};
 public:
-    Robot() {
+    Robot() : drive (frontLeft, frontRight, backLeft, backRight), intake (intakeMotor, &photoElectric_intake), indexer (indexerMotor, &photoElectric_intake, &photoElectric_shooter){
         setData("Archibald", "Firestorm Robotics", 6341);
     }
 
@@ -40,8 +63,15 @@ public:
 
     }
 
-    void TeleopLoop(){
+    void BeginTeleop(){
+        intake.IntakeBall();
+    }
 
+    void TeleopLoop(){
+        drive.TankLeft(xboxController.GetRawAxis(1));
+        drive.TankRight(xboxController.GetRawAxis(5));
+        drive.Apply();
+        intake.Run();
     }
 
     void AutonomousLoop(){
@@ -51,7 +81,7 @@ public:
     void BeginTest(){
 
     }
-    
+
     void TestLoop(){
 
     }

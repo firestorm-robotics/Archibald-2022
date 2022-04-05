@@ -9,6 +9,8 @@
 #include <frc/Notifier.h>
 #include <units/time.h>
 #include <unistd.h>
+#include <iostream>
+#include <stdio.h>
 
 class ModularRobot;
 
@@ -159,7 +161,7 @@ public:
 
     void StartCompetition(){
         Init();
-        printf((RobotName + " by " + TeamName + " (FRC " + std::to_string(TeamNumber) + ") is now turning on!\n").c_str());
+        std::cout << RobotName << " by " << TeamName << " (FRC " << TeamNumber << ") is now turning on!" << std::endl;
         HAL_InitializeDriverStation();
         HAL_ObserveUserProgramStarting();
         std::thread periodic(periodicThread, this);

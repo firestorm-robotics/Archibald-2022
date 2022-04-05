@@ -1,3 +1,10 @@
+#define OLDMODE
+
+#ifdef NEWMODE
+#include "Robot_remake.hpp"
+#endif
+
+#ifdef OLDMODE
 #include "networktables/NetworkTable.h"
 //#include "networktables/NetworkTableEntry.h"
 //#include "networktables/NetworkTableInstance.h"
@@ -19,6 +26,12 @@
 #include <iostream>
 #include <sys/time.h>
 #include "cameraserver/CameraServer.h"
+#include "rev/ColorSensorV3.h"
+#include "rev/ColorMatch.h"
+#include "rev/REVLibError.h"
+#include <frc/smartdashboard/SmartDashboard.h>
+#include "AHRS.h"
+#include <frc/SPI.h>
 
 
 #define UNIVERSAL_DEADBAND 0.1 // The universal deadband for controls is 5%, this helps with our high-sensitivity issue.
@@ -38,6 +51,14 @@
 
 double sigmoid(double base, long long x){
     return (1/(1 + (1 / pow(base, x))) - 0.5) * 2; // Gets a sigmoid designed specifically for custom PID implementations
+}
+
+double matchColors(frc::Color color, frc::Color color2){
+    double redDif = fabs(color.red - color2.red);
+    double blueDif = fabs(color.blue - color2.blue);
+    double greenDif = fabs(color.green - color2.green);
+    double avg = (redDif + blueDif + greenDif) / 3;
+    return avg;
 }
 
 void setPIDPresets(rev::SparkMaxPIDController sparky){
@@ -135,11 +156,11 @@ struct EncoderifiedSpark{
         done = false;
         reqPos = pos;
         m_encoder.SetPosition(0);
-        m_pid.SetReference(pos, rev::ControlType::kPosition);
+        m_pid.SetReference(pos, rev::CANSparkMax::ControlType::kPosition);
     }
 
     void drivePIDSpeed(long speed){
-        m_pid.SetReference(speed, rev::ControlType::kVelocity);
+        m_pid.SetReference(speed, rev::CANSparkMax::ControlType::kVelocity);
     }
 
     int tick = 0;
@@ -251,6 +272,44 @@ struct SparkMaxDrive{
             backRightPercent = 0;
         }
     }
+
+    void resetEncoders(){
+        if (eS_frontLeft -> m_encoder.SetPosition(0) != rev::REVLibError::kOk){
+            std::cout << "Got an error on the front left encoder" << std::endl;
+        }
+        if (eS_frontRight -> m_encoder.SetPosition(0) != rev::REVLibError::kOk){
+            std::cout << "Got an error on the front right encoder" << std::endl;
+        }
+        if (eS_backLeft -> m_encoder.SetPosition(0) != rev::REVLibError::kOk){
+            std::cout << "Got an error on the back left encoder" << std::endl;
+        }
+        if (eS_backRight -> m_encoder.SetPosition(0) != rev::REVLibError::kOk){
+            std::cout << "Got an error on the back right encoder" << std::endl;
+        }
+    }
+
+    void printEncoders(){
+        std::cout << "Front Right Encoder: " << eS_frontRight -> m_encoder.GetPosition() << std::endl;
+    }
+
+    bool runToRots(long rots, double reduction = 0.1){
+        double distR = eS_frontRight -> m_encoder.GetPosition();
+        double wrongR = rots - distR;
+        double wrongRPerc = sigmoid(10, wrongR) * reduction; //(wrong / rots) * reduction;
+
+        double distL = -eS_frontLeft -> m_encoder.GetPosition();
+        frc::SmartDashboard::PutNumber("Dist L", distL);
+        double wrongL = rots - distL;
+        double wrongLPerc = sigmoid(10, wrongL) * reduction; //(wrong / rots) * reduction;
+        percentDifferentialRight(wrongRPerc);
+        percentDifferentialLeft(-wrongLPerc);
+        run();
+        if (fabs(wrongR) < 5/* && fabs(wrongL) < 5*/){
+            percentArcadeForwards(0);
+            return true;
+        }
+        return false;
+    }
 };
 
 
@@ -277,6 +336,8 @@ public:
 
     rev::CANSparkMax intake {MOTOR_INTAKE, rev::CANSparkMax::MotorType::kBrushless};
     TalonSRX intakeDrop {MOTOR_INTAKE_DROP};
+    VictorSPX leftStaticHook {MOTOR_STATICHOOK_LEFT};
+    VictorSPX rightStaticHook {MOTOR_STATICHOOK_RIGHT};
 
     TalonFX climb {MOTOR_CLIMB};
 
@@ -297,11 +358,12 @@ public:
                                   kMinOutput             = -0.2;*/
 
 
-    frc::DigitalInput shooterPhotoelectric{7}; // When the higher laser (at the shooter) is interrupted by a ball, this reads high
-    frc::DigitalInput intakePhotoelectric{8};  // When the lower laser (at the intake) is interrupted by a ball, this reads high
+    frc::DigitalInput shooterPhotoelectric{PHOTOELECTRIC_SHOOTER}; // When the higher laser (at the shooter) is interrupted by a ball, this reads high
+    frc::DigitalInput intakePhotoelectric{PHOTOELECTRIC_INTAKE};  // When the lower laser (at the intake) is interrupted by a ball, this reads high
 
     frc::DigitalInput intakeUp{3};   // When the intake arm hits the upper limit, this reads high
     frc::DigitalInput intakeDown{4}; // When the intake arm hits the lower limit, this reads high
+    frc::DigitalInput climberDown{CLIMBERSWITCH};
 
     frc::Joystick joystickControls{5};
     frc::XboxController xboxControls{4};
@@ -321,6 +383,21 @@ public:
     frc::GenericHID               controls{3};
     std::shared_ptr<nt::NetworkTable> table = nt::NetworkTableInstance::GetDefault().GetTable("limelight");
 
+    static constexpr auto i2cPort = frc::I2C::Port::kOnboard;
+    rev::ColorSensorV3 m_colorSensor{i2cPort};
+
+    frc::Color redBall;
+    frc::Color blueBall;
+    frc::Color blackTape;
+    rev::ColorMatch m_colorMatcher;
+
+    AHRS* navX;
+
+    double startAng = 0;
+
+    //frc::ShuffleboardTab shuffleAutoTab = frc::Shuffleboard::GetTab("Autonomous metrics");
+
+
     Robot() {
         setData("Archibald", "Firestorm Robotics", 6341);
         //shooterModeButton.set(&controls, 3);
@@ -339,11 +416,24 @@ public:
         setPIDPresets(shooterRightPID);
 
         climb.SetNeutralMode(NeutralMode::Brake);
+        m_colorMatcher.AddColorMatch(redBall);
+        redBall.red = 0.53;
+        redBall.green = 0.344;
+        redBall.blue = 0.125;
+
+        blueBall.red = 0.160;
+        blueBall.green = 0.409;
+        blueBall.blue = 0.430;
+
+        blackTape.red = 0.255;
+        blackTape.green = 0.48;
+        blackTape.blue = 0.264;
+        navX = new AHRS(frc::SPI::Port::kMXP);
     }
 
     void loadShooter(long speed){
-        shooterRightPID.SetReference(speed, rev::ControlType::kVelocity);
-        shooterLeftPID.SetReference(speed, rev::ControlType::kVelocity);
+        shooterRightPID.SetReference(speed, rev::CANSparkMax::ControlType::kVelocity);
+        shooterLeftPID.SetReference(speed, rev::CANSparkMax::ControlType::kVelocity);
     }
 
     uint8_t shootMode = 0;
@@ -404,7 +494,7 @@ public:
             return true;
         }
         else{
-            intakeDrop.Set(ControlMode::PercentOutput, -0.4);
+            intakeDrop.Set(ControlMode::PercentOutput, -0.7);
         }
         return false;
     }
@@ -425,7 +515,7 @@ public:
     bool intakeBall(){
         if (intakeBallState == 0){
             if (!intakePhotoelectric.Get()){
-                intakeEncoderifiedTest -> drivePercent(-0.5);
+                intakeEncoderifiedTest -> drivePercent(0.5);
             }
             else{
                 intakeBallState = 1;
@@ -433,9 +523,13 @@ public:
         }
         else if (intakeBallState == 1){
             if (intakePhotoelectric.Get()){
-                indexerEncoderified -> drivePercent(0.5);
+                intakeBallState = 2;
             }
-            else{
+            intakeEncoderifiedTest -> drivePercent(0.5);
+            indexerEncoderified -> drivePercent(0.6);
+        }
+        else if (intakeBallState == 2){
+            if (!intakePhotoelectric.Get()){
                 indexerEncoderified -> drivePercent(0);
                 intakeEncoderifiedTest -> drivePercent(0);
                 intakeBallState = 0;
@@ -535,8 +629,8 @@ public:
             std::cout << "Who Cares" << std::endl;
         }
         if (joystickControls.GetRawButton(4)){
-            shooterRight.Set(0.95);
-            shooterLeft.Set(0.95);
+            shooterRight.Set(0.97);
+            shooterLeft.Set(0.97);
             percentButtonboardShot = true;
         }
         else if (percentButtonboardShot){
@@ -580,13 +674,22 @@ public:
 
     long shooterReqSpeed = 0;
 
+    double climberUpSpeed = 0;
+
+    bool manualEject = false;
+
     void doubleMode(){
         //printf("Reading joystick values\n");
         double tankLeft = xboxControls.GetRawAxis(1);
         double tankRight = xboxControls.GetRawAxis(5);
+        if (xboxControls.GetLeftBumper() || xboxControls.GetRightBumper()){
+            tankLeft = 0;
+            tankRight = 0;
+        }
         //double limit = (joystickControls.GetThrottle() + 1) / 2;
         double limit = (controls.GetRawAxis(0) + 1) / 2;
         //printf("Running drivetrain\n");
+
         if (fabs(tankLeft) > UNIVERSAL_DEADBAND){
             drive -> percentDifferentialRight(-tankLeft * limit);
         }
@@ -612,59 +715,45 @@ public:
             mode = MODE_INTAKE_BALL;
         }
         if (controls.GetRawButton(BUTTONBOARD_INDEXER_UP)/* || joystickControls.GetRawButton(JOYSTICK_INDEXER_UP)*/){
-            indexer.Set(0.4);
+            indexer.Set(0.2);
             manualIndexerRan = true;
         }
         else if (controls.GetRawButton(BUTTONBOARD_INDEXER_DOWN) /*|| joystickControls.GetRawButton(JOYSTICK_INDEXER_DOWN)*/){
-            indexer.Set(-0.4);
+            indexer.Set(-0.2);
             manualIndexerRan = true;
         }
         else if (manualIndexerRan) {
             indexer.Set(0);
             manualIndexerRan = false;
         }
-        if (controls.GetRawButton(BUTTONBOARD_SHOOTER)/* || joystickControls.GetTrigger()*/){
-            shootButtonState = true;
-        }
-        else if (shootButtonState){
-            shooting = !shooting;
-            if (shooting) {
-                if (controls.GetRawButton(BUTTONBOARD_SHOOTERSPEED_LOW)){
-                    loadShooter(SHOOTERSPEED_LOW);
-                }
-                else if (controls.GetRawButton(BUTTONBOARD_SHOOTERSPEED_VARIABLE)){
-                    loadShooter(NEO_500_RPM * controls.GetRawAxis(BUTTONBOARD_SHOOTER_AXIS));
-                    variableSpeed = (controls.GetRawAxis(BUTTONBOARD_SHOOTER_AXIS) + 1) / 2;
-                }
-                else{
-                    loadShooter(SHOOTERSPEED_HIGH);
-                }
-            }
-            else {
-                loadShooter(0);
-                shooterRight.Set(0);
-                shooterLeft.Set(0);
-            }
-            shootButtonState = false;
+        if (controls.GetRawButton(BUTTONBOARD_SHOOTER)){
+            loadShooter(shooterReqSpeed);
             needsNominalNotification = true;
+            frc::SmartDashboard::PutBoolean("Shooting", true);
+            shooting = true;
         }
-        if (shooting){
-            if (controls.GetRawButton(BUTTONBOARD_SHOOTERSPEED_VARIABLE)){
-                double tst = (controls.GetRawAxis(BUTTONBOARD_SHOOTER_AXIS) + 1) / 2;
-                if (tst > variableSpeed + 0.05 || tst < variableSpeed - 0.05){
-                    variableSpeed = tst;
-                    loadShooter(NEO_500_RPM * tst);
-                }
+        else if (shooting) {
+            shooting = false;
+            loadShooter(0);
+            shooterRight.Set(0);
+            shooterLeft.Set(0);
+            frc::SmartDashboard::PutBoolean("Shooting", false);
+        }
+        /*if (controls.GetRawButton(BUTTONBOARD_SHOOTERSPEED_VARIABLE)){
+            double tst = (controls.GetRawAxis(BUTTONBOARD_SHOOTER_AXIS) + 1) / 2;
+            if (tst > variableSpeed + 0.05 || tst < variableSpeed - 0.05){
+                variableSpeed = tst;
+                loadShooter(NEO_500_RPM * tst);
             }
-            if (controls.GetRawButton(BUTTONBOARD_SHOOTERSPEED_VARIABLE)){
-                shooterReqSpeed = ((controls.GetRawAxis(BUTTONBOARD_SHOOTER_AXIS) + 1) / 2) * NEO_500_RPM;
-            }
-            else if (controls.GetRawButton(BUTTONBOARD_SHOOTERSPEED_LOW)){
-                shooterReqSpeed = SHOOTERSPEED_LOW;
-            }
-            else{
-                shooterReqSpeed = SHOOTERSPEED_HIGH;
-            }
+        }*/
+        if (controls.GetRawButton(BUTTONBOARD_SHOOTERSPEED_VARIABLE)){
+            shooterReqSpeed = SHOOTERSPEED_MID;//((controls.GetRawAxis(BUTTONBOARD_SHOOTER_AXIS) + 1) / 2) * NEO_500_RPM;
+        }
+        else if (controls.GetRawButton(BUTTONBOARD_SHOOTERSPEED_LOW)){
+            shooterReqSpeed = SHOOTERSPEED_LOW;
+        }
+        else{
+            shooterReqSpeed = SHOOTERSPEED_HIGH;
         }
         if (fabs(shooterReqSpeed - shooterRightEncoder.GetVelocity()) <= PID_ACCEPTABLE_ERROR){
             if (needsNominalNotification){
@@ -673,9 +762,11 @@ public:
                 printf(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>\n");
                 needsNominalNotification = false;
             }
+            frc::SmartDashboard::PutBoolean("Shooter Ready", true);
         }
         else {
             needsNominalNotification = true; // When it goes out of the acceptable range, it resets the nominal notification.
+            frc::SmartDashboard::PutBoolean("Shooter Ready", false);
         }
         //printf("Getting button 9\n");
         if (false/*joystickControls.GetRawButton(9)*/){
@@ -705,10 +796,10 @@ public:
                 intakeDrop.Set(ControlMode::PercentOutput, intakeDropVal * 0.8);
             }
         }
-        else{
+        /*else{
             //indexer.Set(0);
             intakeDrop.Set(ControlMode::PercentOutput, 0);
-        }
+        }*/
         //printf("Getting y button\n");
         /*if (xboxControls.GetYButton()){
             mode = MODE_SHOOT;
@@ -716,7 +807,23 @@ public:
         //printf("Running indexer\n");
         //indexer.Set((xboxControls.GetRawAxis(2) - xboxControls.GetRawAxis(3)) * 0.4);
         //printf("Running drivetrain\n");
-        drive -> run();
+        if (xboxControls.GetXButton()){
+            double limelightTargetOffsetAngle = table->GetNumber("tx",0.0);
+            double dif = (limelightTargetOffsetAngle) / 27;
+            frontLeft.Set((dif * 0.5) - 0.35);
+            backLeft.Set((dif * 0.5) - 0.35);
+            frontRight.Set((dif * 0.5) + 0.35);
+            backRight.Set((dif * 0.5) + 0.35);
+        }
+        else if (xboxControls.GetAButton()){
+            frontLeft.Set(0.2);
+            frontRight.Set(-0.2);
+            backLeft.Set(0.2);
+            backRight.Set(-0.2);
+        }
+        else{
+            drive -> run();
+        }
         //intakeEncoderifiedTest ->  runPID();
         if (controls.GetRawButton(BUTTONBOARD_PANIC)){
             mode = MODE_MANUAL;
@@ -726,25 +833,53 @@ public:
             shooterRight.Set(0);
             printf("PANNIICCCCC\nPANNNNIICCCCCC\n\nWhich is to say: you panicked and deactivated all the motors on the robot.\n");
         }
-        if (controls.GetRawButton(BUTTONBOARD_MANUAL_INTAKE)){
-            intake.Set(-0.5);
-            manualIntakeRun = true;
-        }
-        else if (manualIntakeRun) {
-            intake.Set(0);
-            manualIntakeRun = false;
+        if (controls.GetRawButton(BUTTONBOARD_SHOOTER_MACRO)){
+            mode = MODE_SHOOT;
         }
         if (controls.GetRawButton(7)){
-            climb.Set(ControlMode::PercentOutput, xboxControls.GetRawAxis(2) - xboxControls.GetRawAxis(3));
-            std::cout << xboxControls.GetRawAxis(2) - xboxControls.GetRawAxis(3);
+            holdSpeed = xboxControls.GetRawAxis(2) - xboxControls.GetRawAxis(3);
+            climb.Set(ControlMode::PercentOutput, holdSpeed);
+            if (climberDown.Get()){
+                if (climberUpSpeed == 0){
+                    climberUpSpeed = holdSpeed;
+                }
+                climb.Set(ControlMode::PercentOutput, climberUpSpeed * -1);
+            }
+            else {
+                climberUpSpeed = 0;
+            }
         }
         else{
-            climb.Set(ControlMode::PercentOutput, 0);
+            climb.Set(ControlMode::PercentOutput, 0.01);
         }
+        if (xboxControls.GetBButton()){
+            manualEject = true;
+            indexer.Set(-0.3);
+            intake.Set(-0.3);
+        }
+        else if (manualEject){
+            indexer.Set(0);
+            intake.Set(0);
+            manualEject = false;
+        }
+        if (xboxControls.GetRightBumper()){
+            leftStaticHook.Set(ControlMode::PercentOutput, -xboxControls.GetRawAxis(5));
+            rightStaticHook.Set(ControlMode::PercentOutput, xboxControls.GetRawAxis(1));
+        }
+        else {
+            leftStaticHook.Set(ControlMode::PercentOutput, 0);
+            rightStaticHook.Set(ControlMode::PercentOutput, 0);
+        }
+        frc::SmartDashboard::PutNumber("Direction", fixAngle(navx_GetAngle()));//navx_GetAngle());
+        frc::SmartDashboard::PutBoolean("Intake Touching Up Switch", intakeUp.Get());
+        frc::SmartDashboard::PutBoolean("Intake Touching Down Switch", intakeDown.Get());
     }
+
+    double holdSpeed = 0;
 
     void BeginTeleop(){
         loadShooter(0);
+        startAng = navx_GetAngle();
     }
 
     void TeleopLoop(){
@@ -758,7 +893,7 @@ public:
         //printf("Double Mode\n");
         doubleMode();
         if (mode == MODE_SHOOT){
-            if (shoot(NEO_500_RPM * 0.5)){
+            if (shoot(shooterReqSpeed)){
                 mode = MODE_MANUAL;
                 printf("Shot\n");
             }
@@ -787,32 +922,42 @@ public:
                 printf("Loaded ball to shooter\n");
             }
         }
-        if (mode == MODE_SHOOT){
+        /*if (mode == MODE_SHOOT){
             if (shoot(-2000)){
                 mode = MODE_MANUAL;
                 printf("Shot ball\n");
             }
-        }
+        }*/
         //superstructure -> run();
     }
 
-    bool runningAutonomous = true;
-    void AutonomousLoop(){
+    uint8_t autonomousPhase = 0;
+    // One ball auto
+    /*void AutonomousLoop(){
+        if (autonomousPhase == 1){
+            frontLeft.Set(-0.3);
+            backLeft.Set(-0.3);
+            frontRight.Set(0.3);
+            backRight.Set(0.3);
+        }
+        std::cout << rotsToInches(drive -> eS_backLeft -> m_encoder.GetPosition()) << std::endl;
+        usleep(1000000);
+    }*/
 
+    double rotsToInches(double rots){
+        return (rots * 18.5) / 6;
     }
-    void BeginAutonomous(){
+    // One ball auto
+    /*void BeginAutonomous(){
         while (!shoot(SHOOTERSPEED_HIGH));
-        usleep(500000);
-        frontLeft.Set(0.3);
-        frontRight.Set(-0.3);
-        backLeft.Set(0.3);
-        backRight.Set(-0.3);
-        usleep(2500000);
-        frontLeft.Set(0);
-        frontRight.Set(0);
-        backLeft.Set(0);
-        backRight.Set(0);
-    }
+        usleep(1000000); // Give it a very short amount of time.
+        drive -> percentArcadeForwards(0.3);
+        drive -> run();
+        usleep(1000000);
+        drive -> percentArcadeForwards(0);
+        drive -> run();
+        //drive -> eS_backLeft -> m_encoder.SetPosition(0);
+    }*/
 
     const int shooterTestVelocity = 1000;
 
@@ -821,14 +966,143 @@ public:
         usleep(1000000);
     }*/
 
-    void TestLoop() {
+    uint8_t autoPhase_l = 0;
+
+    bool driveToAngle(double ang, double speed = 0.2, bool direction = false){
+        if (ang < 0){
+            ang *= -1;
+            //direction = !direction;
+        }
+        double difAng = navx_GetAngle() - ang;
+        double power = 0;
+        if (difAng > 20){
+            power = speed * (direction ? 1 : -1);
+        }
+        else if (difAng < -20){
+            power = -speed * (direction ? 1 : -1);
+        }
+        else if (difAng > 10){
+            power = speed/2 * (direction ? 1 : -1);
+        }
+        else if (difAng < -10){
+            power = -speed/2 * (direction ? 1 : -1);
+        }
+        else if (difAng > 5){
+            power = speed/4 * (direction ? 1 : -1);
+        }
+        else if (difAng < -5){
+            power = -speed/4 * (direction ? 1 : -1);
+        }
+        else {
+            drive -> percentArcadeTurn(0);
+            drive -> run();
+            return true; // It no longer has to run the motors, it's such a big boy now!
+        }
+        drive -> percentArcadeTurn(power);
+        drive -> run();
+        return false;
+    }
+
+    double fixAngle(double angle){ // Coterminal!
+        angle -= startAng;
+        while (angle < 0){
+            angle += 360;
+        }
+        while (angle > 360){
+            angle -= 360;
+        }
+        return angle;
+    }
+    // Two ball auto - right
+    void AutonomousLoop() {
         //double limelightTargetOffsetAngle_Horizontal = table->GetNumber("tx",0.0);
-        double limelightTargetOffsetAngle_Vertical = table->GetNumber("ty",0.0);
-        double dif = LIMELIGHT_HUB_ANGLE_FOR_SHOOTING - limelightTargetOffsetAngle_Vertical / 27;
-        frontLeft.Set(dif);
-        backLeft.Set(dif);
-        frontRight.Set(-dif);
-        backRight.Set(-dif);
+        //std::cout << limelightTargetOffsetAngle_Vertical << std::endl;
+        //usleep(1000000);
+        /*frc::Color detectedColor = m_colorSensor.GetColor();
+        //std::cout << matchColors(detectedColor, blueBall) << std::endl;
+        double isBlackTape = matchColors(detectedColor, blackTape);
+        double isRedBall = matchColors(detectedColor, redBall);
+        double isBlueBall = matchColors(detectedColor, blueBall);
+        if (isBlackTape < 0.003){
+            std::cout << "I see Black Tape" << std::endl;
+        }
+        else {
+            std::cout << "I see nothing." << std::endl;
+        }
+        std::cout << isBlueBall << std::endl;
+        //std::cout << "R: " << detectedColor.red << " G: " << detectedColor.green << " B: " << detectedColor.blue << std::endl;
+        usleep(1000000);*/
+        if (autoPhase_l == 0){
+            if (shoot(SHOOTERSPEED_LOW)){
+                autoPhase_l ++;
+            }
+        }
+        else if (autoPhase_l == 1){
+            if (drive -> runToRots(-34)){
+                autoPhase_l ++;
+                startAng = navx_GetAngle();
+            }
+        }
+        else if (autoPhase_l == 2){ // Robot is at 78 degrees at start (33 + 45), needs to turn to the ball which is (from trig) 21, so turn it by 90 - 78 = 12 degrees then turn by 21. The total change is 33. We want it to be in the 4th quadrant, so 180 -.
+            if (driveToAngle(fixAngle(180 - 55))) {
+                autoPhase_l ++;
+            }
+        }
+        else if (autoPhase_l == 3){
+            if (dropIntake()){
+                autoPhase_l ++;
+                drive -> resetEncoders();
+            }
+        }
+        else if (autoPhase_l == 4){
+            drive -> percentArcadeForwards(-0.08);
+            drive -> run();
+            if (intakeBall()){
+                autoPhase_l ++;
+                drive -> percentArcadeForwards(0);
+                drive -> run();
+            }
+        }
+        else if (autoPhase_l == 5){
+            if (raiseIntake()){
+                autoPhase_l ++;
+            }
+        }
+        else if (autoPhase_l == 6){
+            if (drive -> runToRots(0)){
+                autoPhase_l ++;
+            }
+        }
+        else if (autoPhase_l == 7){
+            if (driveToAngle(175)) {
+                autoPhase_l ++;
+                drive -> resetEncoders();
+            }
+        }
+        else if (autoPhase_l == 8){
+            if (drive -> runToRots(37)){
+                autoPhase_l ++;
+                drive -> percentArcadeForwards(0);
+                drive -> run();
+            }
+        }
+        else if (autoPhase_l == 9){
+            if (shoot(SHOOTERSPEED_LOW)){
+                autoPhase_l ++;
+            }
+        }
+    }
+
+    double navx_GetAngle(){
+        return navX -> GetYaw() + 180;
+    }
+    // Two ball auto - right
+    void BeginAutonomous(){
+        drive -> resetEncoders();
+        drive -> printEncoders();
+        navX -> ZeroYaw();
+        autoPhase_l = 0;
+        startAng = navx_GetAngle();
     }
 };
 
@@ -837,4 +1111,6 @@ public:
 int main() {
   return frc::StartRobot<Robot>();
 }
+#endif
+
 #endif
