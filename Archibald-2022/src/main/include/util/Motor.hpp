@@ -1,5 +1,8 @@
 // Unified motor struct for Talons and Sparks. Will have PID control.
 
+#include <constants.h>
+#include <util/functions.hpp>
+
 #ifndef Motor_hpp_INCLUDED // If it hasn't been included in this project before, pass this line.
 #define Motor_hpp_INCLUDED // Flag it as included so next time somebody does #include <util/Motor.hpp>, it uses the old one instead.
 
@@ -18,10 +21,16 @@ struct Motor {
     rev::SparkMaxRelativeEncoder sparkEncoder;
     uint8_t type = MOTOR_TYPE_NONE;
 
-    long long PIDPos = 0;
-    long long PIDSpeed = 0;
+    double PIDPos = 0;
+    double PIDSpeed = 0;
 
     uint8_t opMode = MOTOR_PID_MODE_NONE;
+
+    bool zero = false;
+
+    bool locked = false; // Is it locked?
+    void* lockObject = 0; // Don't let the motor be controlled by non-lockholders
+    bool lockCommand = false; // Next command is issued by the lockholder
 
     static Motor* CreateMotor(TalonSRX* controller) {
         Motor* ret = (Motor*)malloc(sizeof(Motor));
@@ -38,6 +47,7 @@ struct Motor {
         ret -> type = MOTOR_TYPE_SPARK;
         ret -> sparkPID = controller -> GetPIDController();
         ret -> sparkEncoder = controller -> GetEncoder();
+        util::setPIDPresets(ret -> sparkPID);
         return ret;
     }
 
@@ -60,44 +70,108 @@ struct Motor {
         PIDPos = pos;
     }
 
+    void _driveCustonPIDTo(double pos, double reduction = 0.2){
+        double dist = pos - GetPosition();
+        double distPerc = util::sigmoid(10, dist);
+        PIDPos = pos;
+        _drivePercent(distPerc * reduction);
+    }
+
     void _drivePIDSpeed(long speed){
         if (type == MOTOR_TYPE_TALON){
 
         }
-        else {
+        else if (type == MOTOR_TYPE_SPARK) {
             sparkPID.SetReference(speed, rev::CANSparkMax::ControlType::kVelocity);
         }
         PIDSpeed = speed;
     }
 
     void Set(double amount) {
-        _drivePercent(amount);
+        if (lockCommand || !locked){
+            _drivePercent(amount);
+            lockCommand = false;
+        }
     }
 
-    void SetPos(long pos) {
-        _drivePIDTo(pos);
+    void SetPos(double pos) {
+        //_drivePIDTo(pos);
+        if (lockCommand || !locked){
+            _driveCustonPIDTo(pos);
+            lockCommand = false;
+        }
     }
 
-    bool checkDone(){
+    double GetPosition(){
         if (type == MOTOR_TYPE_SPARK){
-            if (opMode == MOTOR_PID_MODE_POS){
-                if (sparkEncoder.GetPosition() == PIDPos){
-                    return true;
-                }
-                else {
-                    return false;
-                }
+            return sparkEncoder.GetPosition();
+        }
+        return 0; // Just in case.
+    }
+
+    double GetVelocity(){
+        if (type == MOTOR_TYPE_SPARK){
+            return sparkEncoder.GetVelocity();
+        }
+        return 0;
+    }
+
+    void ZeroEncoder(){
+        if (lockCommand || !locked){
+            if (type == MOTOR_TYPE_SPARK){
+                sparkEncoder.SetPosition(0);
             }
-            else if (opMode == MOTOR_PID_MODE_SPEED){
-                if (sparkEncoder.GetVelocity() == PIDSpeed){
-                    return true;
-                }
-                else {
-                    return false;
-                }
+            zero = true;
+        }
+    }
+
+    bool IsZeroed(){
+        if (zero){
+            if (fabs(GetPosition()) < 0.1){ // 0.1 encoder drift.
+                zero = false;
+                return true;
+            }
+            else{
+                return false;
             }
         }
-        return true; // If there is no PID opmode set and/or no motor type set, this returns true for safety. This statement will only ever evaluate if one of those conditions is true.
+        return true;
+    }
+
+    bool SetSpeed(long speed){
+        if (lockCommand || !locked){
+            _drivePIDSpeed(speed);
+            if (abs(GetVelocity() - speed) < PID_SPEED_ACCEPTABLE_ERROR) {
+                return true;
+            }
+            lockCommand = false;
+        }
+        return false;
+    }
+
+    bool Lock(void* thing){
+        if (!locked){
+            locked = true;
+            lockObject = thing;
+            return true;
+        }
+        return false;
+    }
+
+    bool Unlock(void* thing){
+        if (thing == lockObject && locked){
+            locked = false;
+            return true;
+        }
+        return false;
+    }
+
+    bool LockCommand(void* thing){
+        if (thing == lockObject && locked){
+            lockCommand = true;
+            return true;
+        }
+        return false;
     }
 };
 #endif

@@ -1,4 +1,4 @@
-#define OLDMODE
+#define NEWMODE
 
 #ifdef NEWMODE
 #include "Robot_remake.hpp"
@@ -34,7 +34,7 @@
 #include <frc/SPI.h>
 
 
-#define UNIVERSAL_DEADBAND 0.1 // The universal deadband for controls is 5%, this helps with our high-sensitivity issue.
+#define UNIVERSAL_DEADBAND 0.1 // The universal deadband for controls is 0.1, this helps with our high-sensitivity issue.
 
 #define NEO_500_RPM        5676
 
@@ -310,6 +310,14 @@ struct SparkMaxDrive{
         }
         return false;
     }
+
+    bool runToRotsAndZero(long rots, double reduction = 0.1){
+        frc::SmartDashboard::PutNumber("Speed", eS_frontLeft -> m_encoder.GetVelocity());
+        if (runToRots(rots, reduction) && fabs(eS_frontLeft -> m_encoder.GetVelocity()) < 0.2){
+            return true;
+        }
+        return false;
+    }
 };
 
 
@@ -453,32 +461,44 @@ public:
 
     bool shoot(long speed){
         if (shootState == 0){
-            loadShooter(speed);
-            shootState = 1;
+            if (shooterPhotoelectric.Get()){
+                indexerEncoderified -> drivePercent(-0.3);
+            }
+            else {
+                shootState ++;
+            }
         }
         else if (shootState == 1){
-            if (shooterRightEncoder.GetVelocity() >= speed - PID_ACCEPTABLE_ERROR){
-                shootState = 2;
+            loadShooter(speed);
+            shootState ++;
+        }
+        else if (shootState == 2){
+            if (shooterRightEncoder.GetVelocity() >= speed - PID_SPEED_ACCEPTABLE_ERROR){
+                shootState ++;
                 printf("Phase 2\n");
             }
             else{
                 indexerEncoderified -> drivePercent(0);
             }
         }
-        else if (shootState == 2){
+        else if (shootState == 3){
             if (shooterPhotoelectric.Get()){
-                shootState = 3;
+                shootState ++;
             }
             else {
-                indexerEncoderified ->  drivePercent(0.3);
+                indexerEncoderified ->  drivePercent(0.7);
             }
         }
-        else if (shootState == 3){
+        else if (shootState == 4){
             if (!shooterPhotoelectric.Get()){
                 shooterRight.Set(0);
                 shooterLeft.Set(0);
                 shootState = 0;
                 indexerEncoderified -> drivePercent(0);
+                ballsCount --;
+                if (ballsCount < 0){
+                    ballsCount = 0; // There was an uncounted pick-up, this quietly fixes the issue.
+                }
                 return true;
             }
             else{
@@ -512,6 +532,8 @@ public:
 
     uint8_t intakeBallState = 0;
 
+    long long timeticks = 0;
+
     bool intakeBall(){
         if (intakeBallState == 0){
             if (!intakePhotoelectric.Get()){
@@ -527,14 +549,38 @@ public:
             }
             intakeEncoderifiedTest -> drivePercent(0.5);
             indexerEncoderified -> drivePercent(0.6);
+            indexerEncoderified -> m_encoder.SetPosition(0);
         }
         else if (intakeBallState == 2){
             if (!intakePhotoelectric.Get()){
-                indexerEncoderified -> drivePercent(0);
                 intakeEncoderifiedTest -> drivePercent(0);
-                intakeBallState = 0;
-                return true;
+                intakeBallState = 3;
+                indexerEncoderified -> m_encoder.SetPosition(0);
             }
+        }
+        else if (intakeBallState == 3){
+            indexerEncoderified -> drivePercent(0.4);
+            timeticks ++;
+            float reqPos = 0;
+            if (ballsCount == 1){
+                reqPos = 12;
+            }
+            else if (ballsCount == 0){
+                reqPos = 15;
+            }
+            else {
+                reqPos = 14;
+            }
+            if ((indexerEncoderified -> m_encoder.GetPosition() > 19) || shooterPhotoelectric.Get()){
+                std::cout << std::endl << "You Suck" << std::endl << std::endl;
+                intakeBallState ++;
+            }
+        }
+        else if (intakeBallState == 4){
+            intakeBallState = 0;
+            indexerEncoderified -> drivePercent(0);
+            ballsCount ++;
+            return true;
         }
         return false;
     }
@@ -678,6 +724,8 @@ public:
 
     bool manualEject = false;
 
+    int8_t ballsCount;
+
     void doubleMode(){
         //printf("Reading joystick values\n");
         double tankLeft = xboxControls.GetRawAxis(1);
@@ -747,7 +795,8 @@ public:
             }
         }*/
         if (controls.GetRawButton(BUTTONBOARD_SHOOTERSPEED_VARIABLE)){
-            shooterReqSpeed = SHOOTERSPEED_MID;//((controls.GetRawAxis(BUTTONBOARD_SHOOTER_AXIS) + 1) / 2) * NEO_500_RPM;
+            shooterReqSpeed = ((controls.GetRawAxis(BUTTONBOARD_SHOOTER_AXIS) + 1) / 2) * NEO_500_RPM;
+            frc::SmartDashboard::PutNumber("Variable", (controls.GetRawAxis(BUTTONBOARD_SHOOTER_AXIS) + 1) / 2);
         }
         else if (controls.GetRawButton(BUTTONBOARD_SHOOTERSPEED_LOW)){
             shooterReqSpeed = SHOOTERSPEED_LOW;
@@ -755,7 +804,7 @@ public:
         else{
             shooterReqSpeed = SHOOTERSPEED_HIGH;
         }
-        if (fabs(shooterReqSpeed - shooterRightEncoder.GetVelocity()) <= PID_ACCEPTABLE_ERROR){
+        if (fabs(shooterReqSpeed - shooterRightEncoder.GetVelocity()) <= PID_SPEED_ACCEPTABLE_ERROR){
             if (needsNominalNotification){
                 printf(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>\n");
                 printf(" YOU HAVE ACHIEVED NOMINAL SPEED \n");
@@ -821,6 +870,12 @@ public:
             backLeft.Set(0.2);
             backRight.Set(-0.2);
         }
+        else if (xboxControls.GetYButton()){
+            frontLeft.Set(-0.2);
+            frontRight.Set(0.2);
+            backLeft.Set(-0.2);
+            backRight.Set(0.2);
+        }
         else{
             drive -> run();
         }
@@ -856,6 +911,7 @@ public:
             manualEject = true;
             indexer.Set(-0.3);
             intake.Set(-0.3);
+            ballsCount = 0;
         }
         else if (manualEject){
             indexer.Set(0);
@@ -870,7 +926,6 @@ public:
             leftStaticHook.Set(ControlMode::PercentOutput, 0);
             rightStaticHook.Set(ControlMode::PercentOutput, 0);
         }
-        frc::SmartDashboard::PutNumber("Direction", fixAngle(navx_GetAngle()));//navx_GetAngle());
         frc::SmartDashboard::PutBoolean("Intake Touching Up Switch", intakeUp.Get());
         frc::SmartDashboard::PutBoolean("Intake Touching Down Switch", intakeDown.Get());
     }
@@ -931,6 +986,12 @@ public:
         //superstructure -> run();
     }
 
+    void Loop(){
+        frc::SmartDashboard::PutNumber("Balls Count", ballsCount);
+        frc::SmartDashboard::PutNumber("Speed Limit", (controls.GetRawAxis(0) + 1) / 2);
+        frc::SmartDashboard::PutNumber("Direction", fixAngle(navx_GetAngle()));//navx_GetAngle());
+    }
+
     uint8_t autonomousPhase = 0;
     // One ball auto
     /*void AutonomousLoop(){
@@ -968,7 +1029,7 @@ public:
 
     uint8_t autoPhase_l = 0;
 
-    bool driveToAngle(double ang, double speed = 0.2, bool direction = false){
+    bool driveToAngle(double ang, double speed = 0.175, bool direction = false){
         if (ang < 0){
             ang *= -1;
             //direction = !direction;
@@ -976,30 +1037,37 @@ public:
         double difAng = navx_GetAngle() - ang;
         double power = 0;
         if (difAng > 20){
-            power = speed * (direction ? 1 : -1);
+            power = speed;
         }
         else if (difAng < -20){
-            power = -speed * (direction ? 1 : -1);
+            power = -speed;
         }
         else if (difAng > 10){
-            power = speed/2 * (direction ? 1 : -1);
+            power = speed/2;
         }
         else if (difAng < -10){
-            power = -speed/2 * (direction ? 1 : -1);
+            power = -speed/2;
         }
         else if (difAng > 5){
-            power = speed/4 * (direction ? 1 : -1);
+            power = speed/4;
         }
         else if (difAng < -5){
-            power = -speed/4 * (direction ? 1 : -1);
+            power = -speed/4;
         }
         else {
             drive -> percentArcadeTurn(0);
-            drive -> run();
             return true; // It no longer has to run the motors, it's such a big boy now!
         }
+        power *= (direction ? 1 : -1);
         drive -> percentArcadeTurn(power);
         drive -> run();
+        return false;
+    }
+
+    bool driveToAngleAndZero(double ang, double speed = 0.175, bool direction = false){
+        if (driveToAngle(ang, speed, direction) && fabs(drive -> eS_frontLeft -> m_encoder.GetVelocity()) < 0.2){
+            return true;
+        }
         return false;
     }
 
@@ -1014,37 +1082,29 @@ public:
         return angle;
     }
     // Two ball auto - right
+
+    // This is where you change auto.
+    #define AUTO_TWOBALL_LEFT
+
+    // NOT here, you kinda p***ed romano when you messed *that* one up
+    #ifdef AUTO_TWOBALL_LEFT
+
+    #pragma message ("Using two-ball right auto")
+
     void AutonomousLoop() {
-        //double limelightTargetOffsetAngle_Horizontal = table->GetNumber("tx",0.0);
-        //std::cout << limelightTargetOffsetAngle_Vertical << std::endl;
-        //usleep(1000000);
-        /*frc::Color detectedColor = m_colorSensor.GetColor();
-        //std::cout << matchColors(detectedColor, blueBall) << std::endl;
-        double isBlackTape = matchColors(detectedColor, blackTape);
-        double isRedBall = matchColors(detectedColor, redBall);
-        double isBlueBall = matchColors(detectedColor, blueBall);
-        if (isBlackTape < 0.003){
-            std::cout << "I see Black Tape" << std::endl;
-        }
-        else {
-            std::cout << "I see nothing." << std::endl;
-        }
-        std::cout << isBlueBall << std::endl;
-        //std::cout << "R: " << detectedColor.red << " G: " << detectedColor.green << " B: " << detectedColor.blue << std::endl;
-        usleep(1000000);*/
         if (autoPhase_l == 0){
-            if (shoot(SHOOTERSPEED_LOW)){
+            if (shoot(SHOOTERSPEED_HIGH)){
                 autoPhase_l ++;
             }
         }
         else if (autoPhase_l == 1){
-            if (drive -> runToRots(-34)){
+            if (drive -> runToRots(-AUTO_MIDSTALK_LENGTH, 0.25)){
                 autoPhase_l ++;
                 startAng = navx_GetAngle();
             }
         }
-        else if (autoPhase_l == 2){ // Robot is at 78 degrees at start (33 + 45), needs to turn to the ball which is (from trig) 21, so turn it by 90 - 78 = 12 degrees then turn by 21. The total change is 33. We want it to be in the 4th quadrant, so 180 -.
-            if (driveToAngle(fixAngle(180 - 55))) {
+        else if (autoPhase_l == 2){
+            if (driveToAngle(fixAngle(180 + 40), 0.25)) {
                 autoPhase_l ++;
             }
         }
@@ -1055,8 +1115,131 @@ public:
             }
         }
         else if (autoPhase_l == 4){
-            drive -> percentArcadeForwards(-0.08);
-            drive -> run();
+            drive -> runToRots(10, 0.25);
+            if (intakeBall()){
+                autoPhase_l = 6;
+                drive -> percentArcadeForwards(0);
+                drive -> run();
+            }
+        }
+        else if (autoPhase_l == 6){
+            if (drive -> runToRots(-5, 0.25) && raiseIntake()){
+                autoPhase_l ++;
+            }
+        }
+        else if (autoPhase_l == 7){
+            if (driveToAngle(fixAngle(-8), 0.25)) {
+                autoPhase_l ++;
+                drive -> resetEncoders();
+            }
+        }
+        else if (autoPhase_l == 8){
+            if (drive -> runToRotsAndZero(AUTO_MIDSTALK_LENGTH - 5, 0.25)){
+                autoPhase_l ++;
+                drive -> percentArcadeForwards(0);
+                drive -> run();
+            }
+        }
+        else if (autoPhase_l == 9){
+            if (shoot(SHOOTERSPEED_HIGH)){
+                autoPhase_l ++;
+            }
+        }
+    }
+
+    #endif
+
+    // Two ball auto - left
+
+    #ifdef AUTO_TWOBALL_RIGHT
+
+    #pragma message ("Using two-ball left auto")
+    void AutonomousLoop() {
+        if (autoPhase_l == 0){
+            if (shoot(SHOOTERSPEED_MID)){
+                autoPhase_l ++;
+            }
+        }
+        else if (autoPhase_l == 1){
+            if (drive -> runToRots(-AUTO_MIDSTALK_LENGTH, 0.25)){
+                autoPhase_l ++;
+                startAng = navx_GetAngle();
+            }
+        }
+        else if (autoPhase_l == 2){
+            if (driveToAngle(fixAngle(180 - 45), 0.25)) {
+                autoPhase_l ++;
+            }
+        }
+        /*else if (autoPhase_l == 3){
+            if (dropIntake()){
+                autoPhase_l ++;
+                drive -> resetEncoders();
+            }
+        }
+        else if (autoPhase_l == 4){
+            drive -> runToRots(10, 0.25);
+            if (intakeBall()){
+                autoPhase_l = 6;
+                drive -> percentArcadeForwards(0);
+                drive -> run();
+            }
+        }
+        else if (autoPhase_l == 6){
+            if (drive -> runToRots(-5, 0.25) && raiseIntake()){
+                autoPhase_l ++;
+            }
+        }
+        else if (autoPhase_l == 7){
+            if (driveToAngle(fixAngle(8), 0.25)) {
+                autoPhase_l ++;
+                drive -> resetEncoders();
+            }
+        }
+        else if (autoPhase_l == 8){
+            if (drive -> runToRotsAndZero(AUTO_MIDSTALK_LENGTH - 5, 0.25)){
+                autoPhase_l ++;
+                drive -> percentArcadeForwards(0);
+                drive -> run();
+            }
+        }
+        else if (autoPhase_l == 9){
+            if (shoot(SHOOTERSPEED_HIGH)){
+                autoPhase_l ++;
+            }
+        }*/
+    }
+    #endif
+
+    // Three ball auto - right
+
+    #ifdef AUTO_THREEBALL
+
+    /*void AutonomousLoop() {
+        if (autoPhase_l == 0){
+            if (shoot(SHOOTERSPEED_LOW)){
+                autoPhase_l ++;
+            }
+        }
+        else if (autoPhase_l == 1){
+            if (drive -> runToRots(-AUTO_MIDSTALK_LENGTH, 0.25)){
+                autoPhase_l ++;
+                startAng = navx_GetAngle();
+            }
+        }
+        else if (autoPhase_l == 2){ // Robot is at 78 degrees at start (33 + 45), needs to turn to the ball which is (from trig) 21, so turn it by 90 - 78 = 12 degrees then turn by 21. The total change is 33. We want it to be in the 4th quadrant, so 180 -.
+            if (driveToAngle(fixAngle(180 - 45), 0.15)) {
+                autoPhase_l ++;
+            }
+        }
+        else if (autoPhase_l == 3){
+            if (dropIntake()){
+                autoPhase_l ++;
+                drive -> resetEncoders();
+            }
+        }
+        else if (autoPhase_l == 4){
+            drive -> runToRots(20, 0.25);
             if (intakeBall()){
                 autoPhase_l ++;
                 drive -> percentArcadeForwards(0);
@@ -1065,33 +1248,64 @@ public:
         }
         else if (autoPhase_l == 5){
             if (raiseIntake()){
-                autoPhase_l ++;
+                autoPhase_l ++; // Skip the rest o' da code. code.
             }
         }
         else if (autoPhase_l == 6){
-            if (drive -> runToRots(0)){
-                autoPhase_l ++;
-            }
-        }
-        else if (autoPhase_l == 7){
-            if (driveToAngle(175)) {
+            if (driveToAngle(fixAngle(290), 0.15)){
                 autoPhase_l ++;
                 drive -> resetEncoders();
             }
         }
-        else if (autoPhase_l == 8){
-            if (drive -> runToRots(37)){
+        else if (autoPhase_l == 7){
+            if (dropIntake()){
                 autoPhase_l ++;
+            }
+        }
+        else if (autoPhase_l == 8){
+            drive -> runToRots(35, 0.25);
+            if (intakeBall()){
                 drive -> percentArcadeForwards(0);
                 drive -> run();
+                autoPhase_l ++;
             }
         }
         else if (autoPhase_l == 9){
+            if (raiseIntake()){
+                autoPhase_l ++;
+            }
+        }
+        else if (autoPhase_l == 10){
+            if (drive -> runToRots(10, 0.25)){
+                autoPhase_l ++;
+            }
+        }
+        else if (autoPhase_l == 11){
+            if (driveToAngle(fixAngle(-12), 0.15)){
+                autoPhase_l ++;
+                drive -> resetEncoders();
+            }
+        }
+        else if (autoPhase_l == 12){
+            if (drive -> runToRots(AUTO_MIDSTALK_LENGTH + 15, 0.25)){
+                drive -> percentArcadeForwards(0);
+                drive -> run(); // Stop it from moving; this will not be an issue in Robot v2 because of my stickiness system.
+                autoPhase_l ++;
+            }
+        }
+        else if (autoPhase_l == 13){
             if (shoot(SHOOTERSPEED_LOW)){
                 autoPhase_l ++;
             }
         }
-    }
+        else if (autoPhase_l == 14){
+            if (shoot(SHOOTERSPEED_LOW)){
+                autoPhase_l ++;
+            }
+        }
+    }*/
+
+    #endif
 
     double navx_GetAngle(){
         return navX -> GetYaw() + 180;
